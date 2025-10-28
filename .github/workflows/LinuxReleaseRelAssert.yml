@@ -38,6 +38,7 @@ jobs:
         -e ENABLE_EXTENSION_AUTOINSTALL=1                                      \
         -e BUILD_BENCHMARK=1                                                   \
         -e FORCE_WARN_UNUSED=1                                                 \
+        -e DISABLE_SANITIZER=1                                                 \
         quay.io/pypa/manylinux_2_28_x86_64                                     \
         bash -c "
           set -e
