@@ -38,11 +38,10 @@ jobs:
         -e ENABLE_EXTENSION_AUTOINSTALL=1                                      \
         -e BUILD_BENCHMARK=1                                                   \
         -e FORCE_WARN_UNUSED=1                                                 \
-        -e DISABLE_SANITIZER=1                                                 \
         quay.io/pypa/manylinux_2_28_x86_64                                     \
         bash -c "
           set -e
-          yum install -y perl-IPC-Cmd gcc-toolset-12 gcc-toolset-12-gcc-c++
+          yum install -y perl-IPC-Cmd gcc-toolset-12 gcc-toolset-12-gcc-c++ libasan
 
           source /opt/rh/gcc-toolset-12/enable
           export CC=gcc
