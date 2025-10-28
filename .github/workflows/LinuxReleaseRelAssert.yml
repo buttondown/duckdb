@@ -1,0 +1,112 @@
+name: Linux RelAssert Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      override_git_describe:
+        description: 'Version tag to override git describe'
+        type: string
+
+env:
+  GH_TOKEN: ${{ secrets.GH_TOKEN }}
+  OVERRIDE_GIT_DESCRIBE: ${{ inputs.override_git_describe }}
+
+jobs:
+  linux-release-relassert-cli:
+    name: Linux RelAssert CLI (amd64)
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Install pytest
+      run: |
+        python3 -m pip install pytest
+
+    - name: Build RelAssert
+      shell: bash
+      run: |
+        export PWD=`pwd`
+        docker run                                                             \
+        -v$PWD:$PWD                                                            \
+        -e CMAKE_BUILD_PARALLEL_LEVEL=2                                        \
+        -e OVERRIDE_GIT_DESCRIBE=$OVERRIDE_GIT_DESCRIBE                        \
+        -e EXTENSION_CONFIGS="$PWD/.github/config/bundled_extensions.cmake"    \
+        -e ENABLE_EXTENSION_AUTOLOADING=1                                      \
+        -e ENABLE_EXTENSION_AUTOINSTALL=1                                      \
+        -e BUILD_BENCHMARK=1                                                   \
+        -e FORCE_WARN_UNUSED=1                                                 \
+        quay.io/pypa/manylinux_2_28_x86_64                                     \
+        bash -c "
+          set -e
+          yum install -y perl-IPC-Cmd gcc-toolset-12 gcc-toolset-12-gcc-c++
+
+          source /opt/rh/gcc-toolset-12/enable
+          export CC=gcc
+          export CXX=g++
+
+          git config --global --add safe.directory $PWD
+          make -C $PWD relassert
+        "
+
+    - name: Print platform
+      shell: bash
+      run: ./build/relassert/duckdb -c "PRAGMA platform;"
+
+    - name: Deploy
+      shell: bash
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.S3_DUCKDB_STAGING_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_DUCKDB_STAGING_KEY }}
+      run: |
+        python3 scripts/amalgamation.py
+        zip -j duckdb_cli-linux-relassert-amd64.zip build/relassert/duckdb
+        gzip -9 -k -n -c build/relassert/duckdb > duckdb_cli-linux-relassert-amd64.gz
+        zip -j libduckdb-linux-relassert-amd64.zip build/relassert/src/libduckdb*.* src/amalgamation/duckdb.hpp src/include/duckdb.h
+        ./scripts/upload-assets-to-staging.sh github_release libduckdb-linux-relassert-amd64.zip duckdb_cli-linux-relassert-amd64.zip duckdb_cli-linux-relassert-amd64.gz
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: duckdb-binaries-linux-relassert-amd64
+        path: |
+          libduckdb-linux-relassert-amd64.zip
+          duckdb_cli-linux-relassert-amd64.zip
+          duckdb_cli-linux-relassert-amd64.gz
+
+    - name: Test
+      shell: bash
+      run: |
+        python3 scripts/run_tests_one_by_one.py build/relassert/test/unittest "*" --time_execution
+
+    - name: Tools Tests
+      shell: bash
+      run: |
+        python3 -m pytest tools/shell/tests --shell-binary build/relassert/duckdb
+
+    - name: Examples
+      shell: bash
+      run: |
+        build/relassert/benchmark/benchmark_runner benchmark/micro/update/update_with_join.benchmark
+        build/relassert/duckdb -c "COPY (SELECT 42) TO '/dev/stdout' (FORMAT PARQUET)" | cat
+
+  upload-libduckdb-src-relassert:
+    name: Upload libduckdb-src-relassert.zip
+    needs: linux-release-relassert-cli
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Deploy
+      shell: bash
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.S3_DUCKDB_STAGING_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_DUCKDB_STAGING_KEY }}
+      run: |
+        python3 scripts/amalgamation.py
+        zip -j libduckdb-src-relassert.zip src/amalgamation/duckdb.hpp src/amalgamation/duckdb.cpp src/include/duckdb.h src/include/duckdb_extension.h
+        ./scripts/upload-assets-to-staging.sh github_release libduckdb-src-relassert.zip
